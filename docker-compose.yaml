@@ -1,14 +1,13 @@
 services:
-  # Serviço da sua aplicação Fastify
   app:
     build:
-      context: . # Diretório onde está o Dockerfile da app
+      context: .
       dockerfile: Dockerfile
     container_name: fastify_app_service
     ports:
-      - "3000:3000" # Mapeia a porta 3000 do container para a 3000 do host
+      - "3000:3000"
     volumes:
-      - app_logs:/app/logs # Monta o volume nomeado 'app_logs' no diretório /app/logs do container
+      - app_logs:/app/logs
     environment:
       NODE_ENV: development
     depends_on:
@@ -17,25 +16,23 @@ services:
     networks:
       - elastic_monitoring_net
     restart: unless-stopped
-    # Adiciona um delay para garantir que o APM server esteja completamente pronto
-    command: sh -c "sleep 10 && node src/api1.js"
+    command: node src/api1.js
 
-  # Serviço do Elasticsearch
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4 # Use uma versão específica e consistente
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
     container_name: elasticsearch_service
     environment:
-      - discovery.type=single-node # Configuração para um único nó (desenvolvimento)
-      - ES_JAVA_OPTS=-Xms512m -Xmx512m # Limita o uso de memória do Java (ajuste conforme seus recursos)
-      - xpack.security.enabled=false # DESABILITA segurança para facilitar em desenvolvimento. NÃO FAÇA ISSO EM PRODUÇÃO.
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - xpack.security.enabled=true
       - xpack.security.http.ssl.enabled=false
       - xpack.security.transport.ssl.enabled=false
     volumes:
-      - es_data:/usr/share/elasticsearch/data # Volume para persistir os dados do Elasticsearch
+      - es_data:/usr/share/elasticsearch/data
     ports:
-      - "9200:9200" # Porta padrão do Elasticsearch
-    healthcheck: # Verifica a saúde do Elasticsearch antes de outros serviços dependerem dele
-      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -vq '\"status\":\"red\"'"]
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -u elastic:12345678 -s http://localhost:9200/_cluster/health | grep -vq '\"status\":\"red\"'"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -44,50 +41,65 @@ services:
     restart: unless-stopped
 
   kibana:
-    image: docker.elastic.co/kibana/kibana:8.13.4 # Mesma versão do Elasticsearch
+    image: docker.elastic.co/kibana/kibana:8.13.4
     container_name: kibana_service
     ports:
-      - "5601:5601" # Porta padrão do Kibana
-    environment:
-      ELASTICSEARCH_HOSTS: '["http://elasticsearch:9200"]' # Aponta o Kibana para o Elasticsearch
-      # SERVER_BASEPATH: /kibana # Se quiser rodar Kibana em um sub-path
-    depends_on:
-      elasticsearch:
-        condition: service_healthy # Espera o Elasticsearch estar saudável
-    networks:
-      - elastic_monitoring_net
-    restart: unless-stopped
-
-  # Serviço do APM Server
-
-  # Serviço do Filebeat
-  filebeat:
-    image: docker.elastic.co/beats/filebeat:8.13.4 # Mesma versão do Elasticsearch
-    container_name: filebeat_service
-    user: root # Necessário para ler o arquivo de configuração montado e, às vezes, logs
+      - "5601:5601"
     volumes:
-      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro # Monta o arquivo de config do Filebeat (read-only)
-      - app_logs:/var/log/app:ro # Monta o volume de logs da app (read-only para o Filebeat)
-      # Se fosse usar Docker autodiscover para logs de stdout/stderr (não é o caso aqui):
-      # - /var/run/docker.sock:/var/run/docker.sock:ro 
+      - ./kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
     depends_on:
       elasticsearch:
         condition: service_healthy
-      app: # Garante que a app tenha iniciado para o arquivo de log existir (Filebeat lida com ausência inicial)
-        condition: service_started 
     networks:
       - elastic_monitoring_net
-    command: filebeat -e -strict.perms=false # -strict.perms=false devido ao arquivo de config montado ser propriedade do host
     restart: unless-stopped
 
-# Volumes nomeados para persistência de dados
+  apm-server:
+    image: docker.elastic.co/apm/apm-server:8.13.4
+    container_name: apm_server
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    ports:
+      - "8200:8200"
+    environment:
+      - ELASTICSEARCH_HOST=http://elasticsearch:9200
+      - output.elasticsearch.hosts=["http://elasticsearch:9200"]
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=12345678
+      - apm-server.host=0.0.0.0:8200
+      - apm-server.register.ingest.pipeline.enabled=true
+      - apm-server.kibana.enabled=true
+      - apm-server.kibana.host=http://kibana:5601
+      - apm-server.kibana.username=elastic
+      - apm-server.kibana.password=12345678
+    networks:
+      - elastic_monitoring_net
+    restart: unless-stopped
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.13.4
+    container_name: filebeat_service
+    user: root
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - app_logs:/var/log/app:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      app:
+        condition: service_started
+    networks:
+      - elastic_monitoring_net
+    command: filebeat -e -strict.perms=false
+    restart: unless-stopped
+
 volumes:
   es_data:
     driver: local
-  app_logs: # Volume compartilhado entre a app (escrita) e o Filebeat (leitura)
+  app_logs:
     driver: local
 
-# Rede customizada para os serviços se comunicarem
 networks:
   elastic_monitoring_net:
     driver: bridge

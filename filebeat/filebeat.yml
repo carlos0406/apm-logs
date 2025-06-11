@@ -1,16 +1,14 @@
-#=========================== Filebeat inputs =============================
+#=========================== Filebeat inputs =============================  
 filebeat.inputs:
-- type: log # Tipo de input para ler arquivos de log
-  enabled: true # Habilita este input
+- type: log
+  enabled: true
   paths:
-    - /var/log/app/app.log # Caminho DENTRO DO CONTAINER Filebeat onde o log da app estará montado
-  
-  # Configurações para parsear logs em formato JSON (gerados pelo Pino)
-  json.keys_under_root: true  # Coloca as chaves do JSON no nível raiz do documento no Elasticsearch
-  json.add_error_key: true    # Adiciona uma chave 'error.message' se o parse do JSON falhar
-  json.message_key: msg       # Assume que a mensagem principal do log está na chave 'msg' (padrão do Pino)
-  
-  # Tags para identificar os logs da sua aplicação
+    - /var/log/app/app.log
+
+  json.keys_under_root: true
+  json.add_error_key: true
+  json.message_key: msg
+
   tags: ["fastify-app", "development"]
   fields:
     service: "fastify-api1"
@@ -18,21 +16,19 @@ filebeat.inputs:
 
 #==================== Elasticsearch output =====================
 output.elasticsearch:
-  # Array de hosts do Elasticsearch. Filebeat fará load balance entre eles.
-  hosts: ["http://elasticsearch:9200"] # Nome do serviço Elasticsearch no Docker Compose
-  
-  # Usar o índice padrão do Filebeat (filebeat-8.13.4-yyyy.MM.dd)
-  # Remover configuração de índice customizado para evitar erro de template
-  
-  # Configurações de conexão
+  hosts: ["http://elasticsearch:9200"]
+  username: "elastic"            # usuário com permissão no Elasticsearch
+  password: "12345678"           # senha configurada
   timeout: 90s
   max_retries: 3
 
 #==================== Kibana ===================================
 setup.kibana:
-  host: "kibana:5601" # Nome do serviço Kibana no Docker Compose
+  host: "kibana:5601"
+  username: "elastic"
+  password: "12345678"
 
-#==================== Template management ===================================
+#==================== Template management =====================
 setup.template.settings:
   index.number_of_shards: 1
   index.number_of_replicas: 0

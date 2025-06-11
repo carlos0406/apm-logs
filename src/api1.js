@@ -1,3 +1,13 @@
+import apm from 'elastic-apm-node'
+
+apm.start({
+  serviceName: 'fastify-app', // Nome do serviço como aparecerá no APM
+  serverUrl: 'http://apm-server:8200', // Nome do container do APM no docker-compose
+  environment: 'development',
+  captureBody: 'all',
+  logLevel: 'info',
+  active: true // Garante que o APM está habilitado
+})
 import Fastify from 'fastify'
 const logFilePath = '/app/logs/app.log'; 
 
@@ -8,6 +18,7 @@ const fastify = Fastify({
     file: logFilePath
   }
 })
+
 
 
 fastify.get('/', function (request, reply) {
@@ -72,31 +83,39 @@ fastify.get('/test-logs', function (request, reply) {
 })
 
 // Endpoint para testar erros e logs de erro
-// fastify.get('/test-error', function (request, reply) {
-//   fastify.log.error({
-//     msg: 'Erro simulado detectado',
-//     traceId: request.traceId,
-//     transactionId: request.transactionId,
-//     errorType: 'SimulatedError'
-//   })
+fastify.get('/test-error', function (request, reply) {
+  fastify.log.error({
+    msg: 'Erro simulado detectado',
+    traceId: request.traceId,
+    transactionId: request.transactionId,
+    errorType: 'SimulatedError'
+  })
   
-//   // Capturar erro no APM
-//   const error = new Error('Erro de teste para demonstração do APM')
-//   error.code = 'TEST_ERROR'
-//   apmAgent.captureError(error, {
-//     custom: {
-//       endpoint: '/test-error',
-//       simulatedError: true
-//     }
-//   })
+  // Capturar erro no APM
+  const error = new Error('Erro de teste para demonstração do APM')
+  // error.code = 'TEST_ERROR'
+  // apmAgent.captureError(error, {
+  //   custom: {
+  //     endpoint: '/test-error',
+  //     simulatedError: true
+  //   }
+  // })
   
-//   reply.code(500).send({ 
-//     error: 'Internal Server Error',
-//     message: 'Erro simulado para teste',
-//     timestamp: new Date().toISOString(),
-//     traceId: request.traceId
-//   })
-// })
+  apm.captureError(error, {
+    custom: {
+      endpoint: '/test-error',
+      simulatedError: true,
+      traceId: request.traceId,
+      transactionId: request.transactionId
+    }
+  })
+  reply.code(500).send({ 
+    error: 'Internal Server Error',
+    message: 'Erro simulado para teste',
+    timestamp: new Date().toISOString(),
+    traceId: request.traceId
+  })
+})
 
 fastify.get('/performance', function (request, reply) {
   // const span = apmAgent.startSpan('custom-performance-check')
