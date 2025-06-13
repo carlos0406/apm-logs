@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   app:
     build:
@@ -10,35 +12,78 @@ services:
       - app_logs:/app/logs
     environment:
       NODE_ENV: development
+      # Variáveis para debug do APM
+      ELASTIC_APM_LOG_LEVEL: debug
+      ELASTIC_APM_ACTIVE: true
     depends_on:
       elasticsearch:
         condition: service_healthy
+      apm-server:
+        condition: service_started
     networks:
       - elastic_monitoring_net
     restart: unless-stopped
-    command: sh -c "sleep 30 && node src/api1.js"
+    # Aguardar mais tempo para os serviços subirem
+    command: sh -c "sleep 45 && node src/api1.js"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  app2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: express_app2_service
+    ports:
+      - "3001:3001"
+    volumes:
+      - app_logs:/app/logs
+    environment:
+      NODE_ENV: development
+      ELASTIC_APM_LOG_LEVEL: debug
+      ELASTIC_APM_ACTIVE: true
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      apm-server:
+        condition: service_started
+    networks:
+      - elastic_monitoring_net
+    restart: unless-stopped
+    command: sh -c "sleep 45 && node src/app2.js"
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
     container_name: elasticsearch_service
     environment:
       - discovery.type=single-node
-      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
       - xpack.security.enabled=true
       - xpack.security.http.ssl.enabled=false
       - xpack.security.transport.ssl.enabled=false
+      - ELASTIC_PASSWORD=12345678
+      - xpack.security.authc.api_key.enabled=true
+      # Configurações importantes para APM
+      - action.auto_create_index=true
+      - cluster.routing.allocation.disk.threshold_enabled=false
     volumes:
       - es_data:/usr/share/elasticsearch/data
     ports:
       - "9200:9200"
     healthcheck:
       test: ["CMD-SHELL", "curl -u elastic:12345678 -s http://localhost:9200/_cluster/health | grep -vq '\"status\":\"red\"'"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      interval: 15s
+      timeout: 10s
+      retries: 15
     networks:
       - elastic_monitoring_net
     restart: unless-stopped
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
 
   kibana:
     image: docker.elastic.co/kibana/kibana:8.13.4
@@ -53,6 +98,11 @@ services:
     networks:
       - elastic_monitoring_net
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:5601/api/status | grep -q '\"overall\":{\"level\":\"available\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
 
   apm-server:
     image: docker.elastic.co/apm/apm-server:8.13.4
@@ -62,16 +112,8 @@ services:
         condition: service_healthy
     ports:
       - "8200:8200"
-    environment:
-      - output.elasticsearch.hosts=http://elasticsearch:9200
-      - output.elasticsearch.username=elastic
-      - output.elasticsearch.password=12345678
-      - apm-server.host=0.0.0.0:8200
-      - apm-server.register.ingest.pipeline.enabled=true
-      - apm-server.kibana.enabled=true
-      - apm-server.kibana.host=http://kibana:5601
-      - apm-server.kibana.username=elastic
-      - apm-server.kibana.password=12345678
+    volumes:
+      - ./apm-server/apm-server.yml:/usr/share/apm-server/apm-server.yml:ro
     networks:
       - elastic_monitoring_net
     restart: unless-stopped
@@ -97,7 +139,7 @@ volumes:
   es_data:
     driver: local
   app_logs:
-    driver: local
+    driver: local 
 
 networks:
   elastic_monitoring_net:

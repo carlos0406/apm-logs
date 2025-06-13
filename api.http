@@ -1,0 +1,40 @@
+### Request simples
+GET http://localhost:3000/
+
+###
+
+### Teste com logs
+GET http://localhost:3000/test-logs
+
+###
+
+### Teste de erro
+GET http://localhost:3000/test-error
+
+###
+
+### Teste de performance
+GET http://localhost:3000/performance
+
+###
+
+### Operação complexa (novo endpoint)
+GET http://localhost:3000/complex-operation
+
+###
+
+### Health check
+GET http://localhost:3000/health
+
+###
+
+
+### Teste post
+
+Post http://localhost:3000/submit-data
+Content-Type: application/json
+
+{
+  "name": "John Doe",
+  "email": "john.doe@example.com"
+}

@@ -1,0 +1,81 @@
+apm-server:
+  host: "0.0.0.0:8200"
+  # Configurações importantes para capturar todas as transações
+  read_timeout: 30s
+  write_timeout: 30s
+  max_header_size: 1048576
+  max_request_queue_time: 2s
+  shutdown_timeout: 30s
+  
+  # Configurações de captura de dados
+  capture:
+    body:
+      enabled: true
+      max_size: 100000
+    headers:
+      enabled: true
+      
+  # Configuração de autenticação anônima
+  auth:
+    anonymous:
+      enabled: true
+      allow_agent: ['*']
+      allow_service: ['*']
+      rate_limit:
+        ip_limit: 1000
+        event_limit: 300
+
+# Configuração do Elasticsearch
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  username: "elastic"
+  password: "12345678"
+  # Configurações importantes para garantir o envio
+  template:
+    enabled: true
+    settings:
+      index:
+        number_of_shards: 1
+        number_of_replicas: 0
+        refresh_interval: "5s"
+  # Timeout aumentado para operações
+  timeout: 90s
+  max_retries: 3
+  backoff:
+    init: 1s
+    max: 60s
+
+# Configuração do Kibana
+setup.kibana:
+  host: "http://kibana:5601"
+  username: "elastic"
+  password: "12345678"
+
+# Configurações de logging - simplificadas para evitar problemas de permissão
+logging.level: debug
+logging.to_stderr: true
+logging.to_files: false
+
+# Configurações de monitoramento interno
+monitoring:
+  enabled: true
+  elasticsearch:
+    hosts: ["http://elasticsearch:9200"]
+    username: "elastic"
+    password: "12345678"
+
+# Configurações de processamento
+queue:
+  mem:
+    events: 4096
+    flush:
+      min_events: 8
+      timeout: 0.1s
+
+# Configurações específicas para APM
+apm-server.rum:
+  enabled: false
+
+# Configurações de SSL (desabilitadas para desenvolvimento)
+apm-server.ssl:
+  enabled: false

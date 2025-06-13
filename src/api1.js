@@ -1,185 +1,310 @@
 import apm from 'elastic-apm-node'
 
+// Configuração do APM otimizada
 apm.start({
- serviceName: 'api1',
+  serviceName: 'api1',
+  serviceVersion: '1.0.0',
+  environment: 'development',
   serverUrl: 'http://apm-server:8200',
   secretToken: '',
   verifyServerCert: false,
-  centralConfig: false // ← evita erro 503 do APM Server
+  centralConfig: false,
+  
+  // Configurações de captura mais específicas
+  captureBody: 'all',
+  captureHeaders: true,
+  captureErrorLogStackTraces: 'always',
+  captureSpanStackTraces: true,
+  
+  // Configurações de amostragem
+  transactionSampleRate: 1.0,
+  spanFramesMinDuration: '5ms',
+  
+  // Configurações de envio
+  apiRequestTime: '10s',
+  apiRequestSize: '750kb',
+  metricsInterval: '30s',
+  
+  // Ativar logs de debug do APM (remover em produção)
+  logLevel: 'debug',
+  
+  active: true,
+  
+  // Filtros personalizados para garantir captura de dados POST
+  addFilter: (payload) => {
+    // Log para debug - remover em produção
+    console.log('APM Payload:', JSON.stringify(payload, null, 2))
+    return payload
+  }
 })
 
 import Fastify from 'fastify'
-const logFilePath = '/app/logs/app.log'; 
-
+const logFilePath = '/app/logs/app.log'
 
 const fastify = Fastify({
   logger: {
     level: 'info',
-    file: logFilePath
+    file: logFilePath,
+    sync: false,
+    dest: logFilePath
+  },
+  keepAliveTimeout: 5000,
+  bodyLimit: 1048576,
+  trustProxy: true
+})
+
+// Graceful shutdown handler
+const gracefulShutdown = async (signal) => {
+  console.log(`Recebido sinal ${signal}, iniciando shutdown graceful...`)
+  try {
+    await fastify.close()
+    console.log('Fastify fechado com sucesso')
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    console.log('Shutdown concluído')
+    process.exit(0)
+  } catch (error) {
+    console.error('Erro durante shutdown:', error)
+    process.exit(1)
+  }
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'))
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
+
+// Tratar erros não capturados
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error)
+  apm.captureError(error, { custom: { type: 'uncaughtException' } })
+  setTimeout(() => process.exit(1), 1000)
+})
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason)
+  apm.captureError(new Error(`Unhandled Rejection: ${reason}`), {
+    custom: { type: 'unhandledRejection', reason: String(reason) }
+  })
+})
+
+// Hook 'onRequest' melhorado
+fastify.addHook('onRequest', async (request, reply) => {
+  const transaction = apm.currentTransaction
+  if (transaction) {
+    transaction.name = `${request.method} ${request.routerPath || request.url}`
+    transaction.type = 'request'
+    
+    // Adicionar mais contexto
+    request.apmTransaction = transaction
+    request.traceId = transaction.traceId
+    request.transactionId = transaction.id
+    
+    // Labels mais detalhados
+    transaction.setLabel('http.method', request.method)
+    transaction.setLabel('http.url', request.url)
+    transaction.setLabel('user_agent', request.headers['user-agent'] || 'unknown')
+    transaction.setLabel('content_type', request.headers['content-type'] || 'unknown')
+    
+    // Para requisições POST, adicionar informações específicas
+    if (request.method === 'POST') {
+      transaction.setLabel('has_body', true)
+      transaction.setLabel('content_length', request.headers['content-length'] || '0')
+    }
   }
 })
 
+// Hook preHandler para capturar body antes do processamento
+fastify.addHook('preHandler', async (request, reply) => {
+  const transaction = apm.currentTransaction
+  if (transaction && request.method === 'POST' && request.body) {
+    try {
+      // Capturar informações do body sem logar dados sensíveis
+      const bodyInfo = {
+        hasBody: true,
+        bodyKeys: typeof request.body === 'object' ? Object.keys(request.body) : [],
+        bodySize: JSON.stringify(request.body).length
+      }
+      
+      transaction.setLabel('body_info', JSON.stringify(bodyInfo))
+      
+      // Adicionar custom context com dados não-sensíveis
+      apm.setCustomContext({
+        request: {
+          method: request.method,
+          url: request.url,
+          hasBody: true,
+          bodyKeys: bodyInfo.bodyKeys,
+          bodySize: bodyInfo.bodySize
+        }
+      })
+      
+    } catch (error) {
+      console.error('Erro ao processar body no APM:', error)
+    }
+  }
+})
 
+// Hook 'onSend' para capturar detalhes da resposta
+fastify.addHook('onSend', async (request, reply, payload) => {
+  const transaction = apm.currentTransaction
+  if (transaction) {
+    transaction.setLabel('http.status_code', reply.statusCode)
+    transaction.result = `HTTP ${String(reply.statusCode).charAt(0)}xx`
+    
+    if (reply.statusCode >= 400) {
+      transaction.setLabel('error', true)
+    } else {
+      transaction.setLabel('success', true)
+    }
+    
+    // Adicionar informações da resposta
+    transaction.setLabel('response_size', payload ? payload.length || 0 : 0)
+  }
+  return payload
+})
+
+// Hook para capturar erros
+fastify.setErrorHandler(async (error, request, reply) => {
+  // Capturar erro com mais contexto
+  apm.captureError(error, {
+    request: request,
+    custom: {
+      url: request.url,
+      method: request.method,
+      headers: request.headers,
+      body: request.method === 'POST' ? request.body : undefined
+    }
+  })
+  
+  fastify.log.error({
+    type: 'error',
+    error: error.message,
+    stack: error.stack,
+    url: request.url,
+    method: request.method,
+    traceId: request.traceId,
+  })
+  
+  reply.code(error.statusCode || 500).send({
+    error: 'Internal Server Error',
+    message: error.message,
+    traceId: request.traceId
+  })
+})
 
 fastify.get('/', function (request, reply) {
-  fastify.log.info({
-    msg: 'Endpoint raiz acessado',
-    traceId: request.traceId,
-    transactionId: request.transactionId
-  })
-  
-  reply.send({ 
+  reply.send({
     hello: 'world',
     timestamp: new Date().toISOString(),
-    traceId: request.traceId
+    traceId: request.traceId,
+    service: 'api1'
   })
 })
 
-fastify.get('/test-logs', function (request, reply) {
-  const startTime = Date.now()
+fastify.post('/submit-data', async function (request, reply) {
+  console.log('POST /submit-data called with body:', request.body)
   
-  fastify.log.info({
-    msg: 'log a',
-    traceId: request.traceId,
-    transactionId: request.transactionId,
-    step: 'inicio_processamento',
-    timestamp: new Date().toISOString()
-  })
+  // Criar span específico para o processamento
+  const span = apm.startSpan('process-submitted-data', 'custom')
   
-  const processId = Math.random().toString(36).substring(7)
-  const data = { 
-    message: 'Dados processados com sucesso',
-    processId: processId,
-    items: [
-      { id: 1, name: 'Item 1' },
-      { id: 2, name: 'Item 2' }
-    ]
+  try {
+    if (span) {
+      span.setLabel('operation', 'data_processing')
+      span.setLabel('user.id', request.body?.userId || 'unknown')
+      span.setLabel('data.keys', request.body ? Object.keys(request.body).join(',') : 'none')
+    }
+    
+    // Adicionar contexto customizado para esta transação
+    apm.setCustomContext({
+      business: {
+        operation: 'submit_data',
+        userId: request.body?.userId,
+        dataReceived: !!request.body,
+        timestamp: new Date().toISOString()
+      }
+    })
+    
+    // Simular processamento
+    await new Promise(resolve => setTimeout(resolve, 50))
+    
+    // Log para debug
+    console.log('Data processed successfully for trace:', request.traceId)
+    
+  } catch (err) {
+    console.error('Error processing data:', err)
+    apm.captureError(err, {
+      custom: {
+        operation: 'submit_data_processing',
+        userId: request.body?.userId
+      }
+    })
+    throw err
+  } finally {
+    if (span) {
+      span.end()
+    }
   }
 
-  // LOG B
-  fastify.log.info({
-    msg: 'log b',
-    traceId: request.traceId,
-    transactionId: request.transactionId,
-    step: 'fim_processamento',
-    processId: processId,
-    itemsProcessed: data.items.length,
-    processingTime: Date.now() - startTime,
-    timestamp: new Date().toISOString()
-  })
-  
-  // Métricas customizadas para o APM
-  
-  reply.send({ 
+  const response = {
     status: 'success',
-    data: data,
-    metadata: {
-      processId: processId,
-      processingTime: Date.now() - startTime,
-      timestamp: new Date().toISOString(),
-      traceId: request.traceId
-    }
-  })
-})
-
-// Endpoint para testar erros e logs de erro
-fastify.get('/test-error', function (request, reply) {
-  fastify.log.error({
-    msg: 'Erro simulado detectado',
-    traceId: request.traceId,
-    transactionId: request.transactionId,
-    errorType: 'SimulatedError'
-  })
-  
-  // Capturar erro no APM
-  const error = new Error('Erro de teste para demonstração do APM')
-  // error.code = 'TEST_ERROR'
-  // apmAgent.captureError(error, {
-  //   custom: {
-  //     endpoint: '/test-error',
-  //     simulatedError: true
-  //   }
-  // })
-  
-  apm.captureError(error, {
-    custom: {
-      endpoint: '/test-error',
-      simulatedError: true,
-      traceId: request.traceId,
-      transactionId: request.transactionId
-    }
-  })
-  reply.code(500).send({ 
-    error: 'Internal Server Error',
-    message: 'Erro simulado para teste',
+    message: 'Dados submetidos com sucesso',
+    data: request.body,
     timestamp: new Date().toISOString(),
-    traceId: request.traceId
-  })
-})
-
-fastify.get('/performance', function (request, reply) {
-  // const span = apmAgent.startSpan('custom-performance-check')
-  
-  fastify.log.info({
-    msg: 'Iniciando verificação de performance',
     traceId: request.traceId,
     transactionId: request.transactionId
-  })
-  
-  const start = Date.now()
-  let result = 0
-  for (let i = 0; i < 1000000; i++) {
-    result += Math.random()
-  }
-  const duration = Date.now() - start
-  
-  if (span) {
-    span.setLabel('operation', 'heavy-calculation')
-    span.setLabel('iterations', 1000000)
-    span.end()
   }
   
-  fastify.log.info({
-    msg: 'Performance check concluído',
-    traceId: request.traceId,
-    transactionId: request.transactionId,
-    duration: duration,
-    result: result
-  })
-  
-  reply.send({
-    status: 'completed',
-    performance: {
-      duration: duration,
-      iterations: 1000000,
-      result: result
-    },
-    timestamp: new Date().toISOString(),
-    traceId: request.traceId
-  })
+  console.log('Sending response:', response)
+  reply.send(response)
+})
+
+fastify.get('/test-error', function (request, reply) {
+  const error = new Error('Erro de teste para demonstração do APM')
+  error.statusCode = 500
+  throw error
 })
 
 fastify.get('/health', function (request, reply) {
-  fastify.log.info({
-    msg: 'Health check solicitado',
-    traceId: request.traceId,
-    transactionId: request.transactionId
+  reply.send({ 
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    apm: {
+      active: apm.isStarted(),
+      traceId: apm.currentTransaction?.traceId || null
+    }
+  })
+})
+
+// Rota adicional para testar captura de dados
+fastify.post('/test-post', async function (request, reply) {
+  console.log('Test POST called')
+  
+  apm.setCustomContext({
+    test: {
+      endpoint: 'test-post',
+      body: request.body,
+      timestamp: new Date().toISOString()
+    }
   })
   
   reply.send({
-    status: 'healthy',
-    service: 'fastify-api',
-    timestamp: new Date().toISOString(),
+    message: 'Test POST successful',
+    received: request.body,
+    traceId: request.traceId
   })
 })
 
 const start = async () => {
   try {
     await fastify.listen({ port: 3000, host: '0.0.0.0' })
-    fastify.log.info('Servidor iniciado na porta 3000')
+    console.log('Servidor iniciado na porta 3000 com instrumentação APM completa')
+    console.log('APM Status:', {
+      active: apm.isStarted(),
+      serviceName: apm.getServiceName(),
+      serviceVersion: apm.getServiceVersion()
+    })
   } catch (err) {
-    fastify.log.error(err)
-    process.exit(1)
+    console.error('Erro ao iniciar servidor:', err)
+    apm.captureError(err, { custom: { phase: 'startup', critical: true } })
+    setTimeout(() => process.exit(1), 1000)
   }
 }
 
