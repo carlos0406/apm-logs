@@ -1,13 +1,13 @@
 import apm from 'elastic-apm-node'
 
 apm.start({
-  serviceName: 'fastify-app', // Nome do serviço como aparecerá no APM
-  serverUrl: 'http://apm-server:8200', // Nome do container do APM no docker-compose
-  environment: 'development',
-  captureBody: 'all',
-  logLevel: 'info',
-  active: true // Garante que o APM está habilitado
+ serviceName: 'api1',
+  serverUrl: 'http://apm-server:8200',
+  secretToken: '',
+  verifyServerCert: false,
+  centralConfig: false // ← evita erro 503 do APM Server
 })
+
 import Fastify from 'fastify'
 const logFilePath = '/app/logs/app.log'; 
 

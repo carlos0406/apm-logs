@@ -16,7 +16,7 @@ services:
     networks:
       - elastic_monitoring_net
     restart: unless-stopped
-    command: node src/api1.js
+    command: sh -c "sleep 30 && node src/api1.js"
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
@@ -63,10 +63,9 @@ services:
     ports:
       - "8200:8200"
     environment:
-      - ELASTICSEARCH_HOST=http://elasticsearch:9200
-      - output.elasticsearch.hosts=["http://elasticsearch:9200"]
-      - ELASTICSEARCH_USERNAME=elastic
-      - ELASTICSEARCH_PASSWORD=12345678
+      - output.elasticsearch.hosts=http://elasticsearch:9200
+      - output.elasticsearch.username=elastic
+      - output.elasticsearch.password=12345678
       - apm-server.host=0.0.0.0:8200
       - apm-server.register.ingest.pipeline.enabled=true
       - apm-server.kibana.enabled=true
