@@ -12,6 +12,14 @@ GET http://localhost:3000/test-logs
 GET http://localhost:3000/test-error
 
 ###
+POST http://localhost:3000/test-error
+Content-Type: application/json
+  
+{
+  "error": "This is a test error"
+}
+
+###
 
 ### Teste de performance
 GET http://localhost:3000/performance
@@ -32,6 +40,26 @@ GET http://localhost:3000/health
 ### Teste post
 
 Post http://localhost:3000/submit-data
+Content-Type: application/json
+
+{
+  "name": "John Doe",
+  "email": "john.doe@example.com",
+  "age": 30
+}
+
+###
+
+Post http://localhost:3000/test-post
+Content-Type: application/json
+
+{
+  "name": "John Doe",
+  "email": "john.doe@example.com"
+}
+
+### 
+GET  http://localhost:3000/app2
 Content-Type: application/json
 
 {

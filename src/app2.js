@@ -1,4 +1,3 @@
-// app2.mjs - Express version of app1.js with APM and Filebeat logging (ESM)
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -9,7 +8,7 @@ const apm = apmInit.start({
   serviceName: 'express-api2',
   serverUrl: 'http://apm-server:8200',
   environment: 'development',
-  secretToken: '', // configure if needed
+  secretToken: '', 
 });
 
 const __filename = fileURLToPath(import.meta.url);
@@ -20,7 +19,6 @@ const LOG_PATH = path.join(__dirname, '../logs/app.log');
 
 app.use(express.json());
 
-// Middleware para logar requisições no arquivo para o Filebeat
 app.use((req, res, next) => {
   const logEntry = {
     timestamp: new Date().toISOString(),
@@ -36,7 +34,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware para enviar body da requisição ao APM
 app.use((req, res, next) => {
   if (apm.currentTransaction) {
     apm.currentTransaction.addLabels({
@@ -55,6 +52,11 @@ app.get('/', (req, res) => {
 app.post('/echo', (req, res) => {
   res.json({ received: req.body });
 });
+
+app.get('/error', (req, res) => {
+  throw new Error('This is a test error');
+}
+);
 
 const PORT = 3001;
 app.listen(PORT, () => {
